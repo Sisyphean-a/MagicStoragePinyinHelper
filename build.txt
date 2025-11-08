@@ -10,3 +10,6 @@ includePDB = true
 # 硬依赖 MagicStorage
 modReferences = MagicStorage
 
+# 外部 DLL 引用
+dllReferences = TinyPinyin
+

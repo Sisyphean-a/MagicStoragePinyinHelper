@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Text;
 using Terraria;
 using Terraria.Localization;
+using TinyPinyin;
 
 namespace MagicStoragePinyinHelper.Core
 {
@@ -57,21 +58,9 @@ namespace MagicStoragePinyinHelper.Core
 			if (_pinyinCache != null && _pinyinCache.TryGetValue(text, out string cached))
 				return cached;
 
-			StringBuilder sb = new StringBuilder();
-			foreach (char ch in text)
-			{
-				if (PinyinData.CharToPinyin.TryGetValue(ch, out string pinyin))
-				{
-					sb.Append(pinyin);
-				}
-				else
-				{
-					// 非汉字字符直接添加（转小写）
-					sb.Append(char.ToLower(ch));
-				}
-			}
-
-			string result = sb.ToString();
+			// 使用 TinyPinyin 获取拼音（无分隔符，转小写）
+			// TinyPinyin 返回大写拼音，我们需要转为小写
+			string result = PinyinHelper.GetPinyin(text, "").ToLower();
 
 			// 缓存结果
 			if (_pinyinCache != null)
@@ -96,14 +85,9 @@ namespace MagicStoragePinyinHelper.Core
 			if (_initialsCache != null && _initialsCache.TryGetValue(text, out string cached))
 				return cached;
 
-			StringBuilder sb = new StringBuilder();
-			foreach (char ch in text)
-			{
-				char initial = PinyinData.GetInitial(ch);
-				sb.Append(char.ToLower(initial));
-			}
-
-			string result = sb.ToString();
+			// 使用 TinyPinyin 获取拼音首字母（无分隔符，转小写）
+			// TinyPinyin 返回大写首字母，我们需要转为小写
+			string result = PinyinHelper.GetPinyinInitials(text, "").ToLower();
 
 			// 缓存结果
 			if (_initialsCache != null)
