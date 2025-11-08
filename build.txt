@@ -1,0 +1,12 @@
+displayName = Magic Storage 拼音搜索助手
+author = xixifu
+version = 0.1.0
+homepage = https://github.com/Sisyphean-a/MagicStoragePinyinHelper
+hideCode = false
+hideResources = false
+includeSource = true
+includePDB = true
+
+# 硬依赖 MagicStorage
+modReferences = MagicStorage
+
