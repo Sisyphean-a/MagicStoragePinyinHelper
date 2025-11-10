@@ -17,6 +17,24 @@ namespace MagicStoragePinyinHelper.Core
 		private static Dictionary<string, string> _initialsCache;
 		private static bool _isInitialized = false;
 
+		// 单字多音字映射 - 为常见多音字提供所有可能的读音
+		// 这是一劳永逸的解决方案：只需维护单个多音字，系统会自动为所有包含该字的词生成拼音变体
+		// 例如：添加 '匙' 后，"钥匙"、"汤匙"、"茶匙" 等所有包含"匙"的词都会自动支持多音字搜索
+		private static readonly Dictionary<char, string[]> _multiPronunciationDict = new Dictionary<char, string[]>
+		{
+			{ '匙', new[] { "chi", "shi" } },      // 汤匙(chí) / 钥匙(shi)
+			{ '钥', new[] { "yue", "yao" } },      // 锁钥(yuè) / 钥匙(yào)
+			{ '重', new[] { "zhong", "chong" } },  // 重量(zhòng) / 重复(chóng)
+			{ '长', new[] { "chang", "zhang" } },  // 长度(cháng) / 长大(zhǎng)
+			{ '调', new[] { "tiao", "diao" } },    // 调整(tiáo) / 调料(diào)
+			{ '角', new[] { "jiao", "jue" } },     // 角度(jiǎo) / 角色(jué)
+			{ '传', new[] { "chuan", "zhuan" } },  // 传说(chuán) / 传记(zhuàn)
+			{ '弹', new[] { "dan", "tan" } },      // 弹药(dàn) / 弹琴(tán)
+			{ '血', new[] { "xue", "xie" } },      // 血液(xuè) / 血腥(xiě)
+			// 发现新的多音字问题时，只需在此添加一行即可，格式：
+			// { '字', new[] { "读音1", "读音2", "读音3" } },
+		};
+
 		/// <summary>
 		/// 初始化拼音转换系统
 		/// </summary>
@@ -72,6 +90,69 @@ namespace MagicStoragePinyinHelper.Core
 		}
 
 		/// <summary>
+		/// 获取字符串所有可能的拼音变体（用于处理多音字）
+		/// </summary>
+		/// <param name="text">输入文本</param>
+		/// <returns>所有可能的拼音组合列表</returns>
+		private static List<string> GetAllPinyinVariants(string text)
+		{
+			if (string.IsNullOrEmpty(text))
+				return new List<string>();
+
+			// 为每个字符获取所有可能的拼音
+			List<List<string>> charPinyinList = new List<List<string>>();
+
+			foreach (char c in text)
+			{
+				List<string> pinyins = new List<string>();
+
+				// 如果是多音字，添加所有可能的读音
+				if (_multiPronunciationDict.TryGetValue(c, out string[] variants))
+				{
+					pinyins.AddRange(variants);
+				}
+
+				// 添加 TinyPinyin 的默认读音
+				string defaultPinyin = PinyinHelper.GetPinyin(c).ToLower();
+				if (!pinyins.Contains(defaultPinyin))
+				{
+					pinyins.Add(defaultPinyin);
+				}
+
+				charPinyinList.Add(pinyins);
+			}
+
+			// 生成所有可能的组合
+			return GeneratePinyinCombinations(charPinyinList);
+		}
+
+		/// <summary>
+		/// 生成拼音组合（笛卡尔积）
+		/// </summary>
+		private static List<string> GeneratePinyinCombinations(List<List<string>> charPinyinList)
+		{
+			if (charPinyinList.Count == 0)
+				return new List<string>();
+
+			List<string> result = new List<string> { "" };
+
+			foreach (var pinyins in charPinyinList)
+			{
+				List<string> newResult = new List<string>();
+				foreach (var existing in result)
+				{
+					foreach (var pinyin in pinyins)
+					{
+						newResult.Add(existing + pinyin);
+					}
+				}
+				result = newResult;
+			}
+
+			return result;
+		}
+
+		/// <summary>
 		/// 获取字符串的拼音首字母
 		/// </summary>
 		/// <param name="text">输入文本</param>
@@ -99,6 +180,42 @@ namespace MagicStoragePinyinHelper.Core
 		}
 
 		/// <summary>
+		/// 获取首字母（从拼音字符串中提取）
+		/// 例如: "yaoshi" -> "ys", "jinyaoshi" -> "jys"
+		/// </summary>
+		private static string ExtractInitialsFromPinyin(string pinyin)
+		{
+			if (string.IsNullOrEmpty(pinyin))
+				return string.Empty;
+
+			StringBuilder result = new StringBuilder();
+			result.Append(pinyin[0]); // 第一个字符一定是首字母
+
+			// 查找每个音节的首字母（辅音后跟元音的位置）
+			for (int i = 1; i < pinyin.Length; i++)
+			{
+				char current = pinyin[i];
+				char previous = pinyin[i - 1];
+
+				// 如果前一个是元音，当前是辅音，说明是新音节的开始
+				if (IsVowel(previous) && !IsVowel(current))
+				{
+					result.Append(current);
+				}
+			}
+
+			return result.ToString();
+		}
+
+		/// <summary>
+		/// 判断是否是元音
+		/// </summary>
+		private static bool IsVowel(char c)
+		{
+			return c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u' || c == 'ü';
+		}
+
+		/// <summary>
 		/// 检查搜索词是否匹配物品名称（拼音匹配）
 		/// </summary>
 		/// <param name="itemName">物品名称</param>
@@ -115,23 +232,47 @@ namespace MagicStoragePinyinHelper.Core
 			{
 				string search = searchText.ToLower();
 
-				// 获取拼音和首字母
+				// 获取默认拼音和首字母
 				string pinyin = GetPinyin(itemName);
 				string initials = GetInitials(itemName);
 
-				// 全拼匹配 或 首字母匹配
-				bool pinyinMatch = pinyin.Contains(search);
-				bool initialsMatch = initials.Contains(search);
-				bool result = pinyinMatch || initialsMatch;
+				// 1. 默认全拼匹配
+				if (pinyin.Contains(search))
+					return true;
 
-				// 调试日志（仅在需要调试时取消注释）
-				// if (result)
-				// {
-				//     var logger = Terraria.ModLoader.ModContent.GetInstance<MagicStoragePinyinHelper>()?.Logger;
-				//     logger?.Info($"✓ 拼音匹配成功: '{itemName}' (拼音:{pinyin}, 首字母:{initials}) 匹配 '{search}'");
-				// }
+				// 2. 默认首字母匹配
+				if (initials.Contains(search))
+					return true;
 
-				return result;
+				// 3. 多音字变体匹配 - 检查是否包含多音字
+				bool hasMultiPronunciation = false;
+				foreach (char c in itemName)
+				{
+					if (_multiPronunciationDict.ContainsKey(c))
+					{
+						hasMultiPronunciation = true;
+						break;
+					}
+				}
+
+				// 如果包含多音字，尝试所有可能的拼音组合
+				if (hasMultiPronunciation)
+				{
+					List<string> variants = GetAllPinyinVariants(itemName);
+					foreach (string variant in variants)
+					{
+						// 检查全拼匹配
+						if (variant.Contains(search))
+							return true;
+
+						// 检查首字母匹配
+						string variantInitials = ExtractInitialsFromPinyin(variant);
+						if (variantInitials.Contains(search))
+							return true;
+					}
+				}
+
+				return false;
 			}
 			catch (Exception)
 			{

@@ -3,11 +3,16 @@
 功能特性:
 ✓ 支持拼音全拼搜索 (例如: tukuai → 土块)
 ✓ 支持拼音首字母搜索 (例如: tk → 土块)
+✓ 智能多音字处理 (例如: yaoshi → 钥匙, ys → 钥匙)
 ✓ 完全兼容原有的中文/英文搜索
 ✓ 无缝集成,零配置即用
 
 使用方法:
 在 Magic Storage 的搜索框中直接输入拼音即可!
+
+多音字支持:
+本模组采用智能多音字处理方案,自动识别并支持常见多音字的所有读音。
+例如"钥匙"可以用 yaoshi、ys、jinyaoshi 等方式搜索。
 
 注意: 本 Mod 需要 Magic Storage 才能运行。
 
@@ -16,6 +21,7 @@
 github : https://github.com/Sisyphean-a/MagicStoragePinyinHelper
 
 理论上，如果魔法存储不变更搜索逻辑，此mod就不需要更新
+抱歉，打脸了，我没想到多音字的问题，TinyPinYin库会把钥匙识别成yaochi，这个暂时手动解决
 
 [quote=tModLoader MagicStoragePinyinHelper]
 Developed By xixifu[/quote]
