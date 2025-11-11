@@ -68,12 +68,9 @@ namespace MagicStoragePinyinHelper
 				ItemSorterPatch.Apply();
 				Logger.Info("搜索功能补丁应用成功！");
 
-				// 预热缓存 - 为所有物品预计算拼音
-				Logger.Info("预热拼音缓存...");
-				PinyinConverter.WarmupCache();
-				Logger.Info("拼音缓存预热完成！");
-
 				Logger.Info("现在可以在 Magic Storage 搜索框中使用拼音搜索了！");
+				Logger.Info($"词组拼音字典已加载 {PhrasePinyinDict.Count} 个词组");
+				Logger.Info($"LRU 缓存容量: 5000 个物品名称");
 			}
 			catch (Exception ex)
 			{
