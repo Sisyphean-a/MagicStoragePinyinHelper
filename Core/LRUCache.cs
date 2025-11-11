@@ -6,6 +6,7 @@ namespace MagicStoragePinyinHelper.Core
 	/// <summary>
 	/// LRU (Least Recently Used) 缓存实现
 	/// 用于限制缓存大小，防止内存无限增长
+	/// 线程安全：使用 lock 保护所有操作
 	/// </summary>
 	/// <typeparam name="TKey">键类型</typeparam>
 	/// <typeparam name="TValue">值类型</typeparam>
@@ -14,6 +15,7 @@ namespace MagicStoragePinyinHelper.Core
 		private readonly int _capacity;
 		private readonly Dictionary<TKey, LinkedListNode<CacheItem>> _cache;
 		private readonly LinkedList<CacheItem> _lruList;
+		private readonly object _lock = new object();
 
 		/// <summary>
 		/// 缓存项
@@ -39,66 +41,84 @@ namespace MagicStoragePinyinHelper.Core
 		}
 
 		/// <summary>
-		/// 获取缓存项
+		/// 获取缓存项（线程安全）
 		/// </summary>
 		public bool TryGetValue(TKey key, out TValue value)
 		{
-			if (_cache.TryGetValue(key, out var node))
+			lock (_lock)
 			{
-				// 移动到链表头部（最近使用）
-				_lruList.Remove(node);
-				_lruList.AddFirst(node);
-				value = node.Value.Value;
-				return true;
-			}
+				if (_cache.TryGetValue(key, out var node))
+				{
+					// 移动到链表头部（最近使用）
+					_lruList.Remove(node);
+					_lruList.AddFirst(node);
+					value = node.Value.Value;
+					return true;
+				}
 
-			value = default(TValue);
-			return false;
+				value = default(TValue);
+				return false;
+			}
 		}
 
 		/// <summary>
-		/// 添加或更新缓存项
+		/// 添加或更新缓存项（线程安全）
 		/// </summary>
 		public void Set(TKey key, TValue value)
 		{
-			if (_cache.TryGetValue(key, out var existingNode))
+			lock (_lock)
 			{
-				// 更新现有项
-				existingNode.Value.Value = value;
-				_lruList.Remove(existingNode);
-				_lruList.AddFirst(existingNode);
-			}
-			else
-			{
-				// 添加新项
-				if (_cache.Count >= _capacity)
+				if (_cache.TryGetValue(key, out var existingNode))
 				{
-					// 移除最久未使用的项
-					var lruNode = _lruList.Last;
-					_lruList.RemoveLast();
-					_cache.Remove(lruNode.Value.Key);
+					// 更新现有项
+					existingNode.Value.Value = value;
+					_lruList.Remove(existingNode);
+					_lruList.AddFirst(existingNode);
 				}
+				else
+				{
+					// 添加新项
+					if (_cache.Count >= _capacity)
+					{
+						// 移除最久未使用的项
+						var lruNode = _lruList.Last;
+						_lruList.RemoveLast();
+						_cache.Remove(lruNode.Value.Key);
+					}
 
-				var newItem = new CacheItem { Key = key, Value = value };
-				var newNode = new LinkedListNode<CacheItem>(newItem);
-				_lruList.AddFirst(newNode);
-				_cache[key] = newNode;
+					var newItem = new CacheItem { Key = key, Value = value };
+					var newNode = new LinkedListNode<CacheItem>(newItem);
+					_lruList.AddFirst(newNode);
+					_cache[key] = newNode;
+				}
 			}
 		}
 
 		/// <summary>
-		/// 清空缓存
+		/// 清空缓存（线程安全）
 		/// </summary>
 		public void Clear()
 		{
-			_cache.Clear();
-			_lruList.Clear();
+			lock (_lock)
+			{
+				_cache.Clear();
+				_lruList.Clear();
+			}
 		}
 
 		/// <summary>
-		/// 获取当前缓存项数量
+		/// 获取当前缓存项数量（线程安全）
 		/// </summary>
-		public int Count => _cache.Count;
+		public int Count
+		{
+			get
+			{
+				lock (_lock)
+				{
+					return _cache.Count;
+				}
+			}
+		}
 
 		/// <summary>
 		/// 获取缓存容量

@@ -12,22 +12,27 @@ namespace MagicStoragePinyinHelper.Core
 	/// </summary>
 	public static class PhrasePinyinDict
 	{
-		// 词组 -> 拼音（无音调，空格分隔）
+		// 词组 -> 拼音（无音调，无空格）
 		private static Dictionary<string, string> _phraseDict;
+		// 词组 -> 拼音（无音调，带空格分隔）- 用于提取首字母
+		private static Dictionary<string, string> _phrasePinyinWithSpaces;
 		private static bool _isLoaded = false;
 
 		/// <summary>
 		/// 加载词组拼音字典
+		/// 如果加载失败，会初始化空字典并记录警告，不会抛出异常
 		/// </summary>
 		public static void Load()
 		{
 			if (_isLoaded)
 				return;
 
+			// 初始化空字典（降级方案）
+			_phraseDict = new Dictionary<string, string>();
+			_phrasePinyinWithSpaces = new Dictionary<string, string>();
+
 			try
 			{
-				_phraseDict = new Dictionary<string, string>();
-
 				// 从 Mod 文件中加载
 				var mod = ModContent.GetInstance<MagicStoragePinyinHelper>();
 				string filePath = "Data/phrase_pinyin.txt";
@@ -71,15 +76,16 @@ namespace MagicStoragePinyinHelper.Core
 							continue;
 
 						// 移除音调并转小写
-						pinyin = RemoveTones(pinyin);
+						string pinyinWithSpaces = RemoveTones(pinyin);
 
 						// 移除空格，连接成一个字符串
-						pinyin = pinyin.Replace(" ", "");
+						string pinyinNoSpaces = pinyinWithSpaces.Replace(" ", "");
 
 						// 存储（如果有多个读音，保留第一个）
 						if (!_phraseDict.ContainsKey(phrase))
 						{
-							_phraseDict[phrase] = pinyin;
+							_phraseDict[phrase] = pinyinNoSpaces;
+							_phrasePinyinWithSpaces[phrase] = pinyinWithSpaces;
 						}
 					}
 
@@ -90,7 +96,15 @@ namespace MagicStoragePinyinHelper.Core
 			}
 			catch (Exception ex)
 			{
-				throw new Exception($"加载词组拼音字典失败: {ex.Message}", ex);
+				// 降级方案：字典加载失败时，使用空字典
+				// 这样仍可使用 TinyPinyin 进行基本的拼音转换
+				var mod = ModContent.GetInstance<MagicStoragePinyinHelper>();
+				mod?.Logger.Warn($"词组拼音字典加载失败: {ex.Message}");
+				mod?.Logger.Warn("将使用降级模式：仅使用 TinyPinyin 进行拼音转换");
+				mod?.Logger.Warn("多音字可能无法正确识别，但基本功能仍可使用");
+
+				// 标记为已加载（使用空字典）
+				_isLoaded = true;
 			}
 		}
 
@@ -101,6 +115,8 @@ namespace MagicStoragePinyinHelper.Core
 		{
 			_phraseDict?.Clear();
 			_phraseDict = null;
+			_phrasePinyinWithSpaces?.Clear();
+			_phrasePinyinWithSpaces = null;
 			_isLoaded = false;
 		}
 
@@ -118,6 +134,23 @@ namespace MagicStoragePinyinHelper.Core
 			}
 
 			pinyin = null;
+			return false;
+		}
+
+		/// <summary>
+		/// 查询词组的拼音（带空格分隔）
+		/// </summary>
+		/// <param name="phrase">词组</param>
+		/// <param name="pinyinWithSpaces">拼音（无音调，带空格分隔）</param>
+		/// <returns>如果找到返回 true</returns>
+		public static bool TryGetPinyinWithSpaces(string phrase, out string pinyinWithSpaces)
+		{
+			if (_phrasePinyinWithSpaces != null && _phrasePinyinWithSpaces.TryGetValue(phrase, out pinyinWithSpaces))
+			{
+				return true;
+			}
+
+			pinyinWithSpaces = null;
 			return false;
 		}
 

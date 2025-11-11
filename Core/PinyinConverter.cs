@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Text;
 using Terraria;
 using Terraria.Localization;
+using Terraria.ModLoader;
 using TinyPinyin;
 
 namespace MagicStoragePinyinHelper.Core
@@ -22,22 +23,39 @@ namespace MagicStoragePinyinHelper.Core
 		// 缓存容量配置
 		private const int CACHE_CAPACITY = 5000;
 
+		// 分词最大词组长度（限制为 4 以提升性能）
+		private const int MAX_PHRASE_LENGTH = 4;
+
 		/// <summary>
 		/// 初始化拼音转换系统
+		/// 即使初始化失败也不会抛出异常，会使用降级模式
 		/// </summary>
 		public static void Initialize()
 		{
 			if (_isInitialized)
 				return;
 
-			// 初始化 LRU 缓存
-			_pinyinCache = new LRUCache<string, string>(CACHE_CAPACITY);
-			_initialsCache = new LRUCache<string, string>(CACHE_CAPACITY);
+			try
+			{
+				// 初始化 LRU 缓存
+				_pinyinCache = new LRUCache<string, string>(CACHE_CAPACITY);
+				_initialsCache = new LRUCache<string, string>(CACHE_CAPACITY);
 
-			// 加载词组拼音字典
-			PhrasePinyinDict.Load();
+				// 加载词组拼音字典（内部已有异常处理）
+				PhrasePinyinDict.Load();
 
-			_isInitialized = true;
+				_isInitialized = true;
+			}
+			catch (Exception ex)
+			{
+				// 降级方案：即使初始化失败，也标记为已初始化
+				// 这样可以继续使用 TinyPinyin 的基本功能
+				var mod = ModContent.GetInstance<MagicStoragePinyinHelper>();
+				mod?.Logger.Error($"拼音转换系统初始化失败: {ex.Message}");
+				mod?.Logger.Warn("将使用降级模式：部分功能可能受限");
+
+				_isInitialized = true;
+			}
 		}
 
 		/// <summary>
@@ -59,6 +77,7 @@ namespace MagicStoragePinyinHelper.Core
 		/// <summary>
 		/// 获取字符串的拼音（小写，无音调）
 		/// 优先从词组字典查询，解决多音字问题
+		/// 如果整个词组不在字典中，尝试分词匹配
 		/// </summary>
 		/// <param name="text">输入文本</param>
 		/// <returns>拼音字符串</returns>
@@ -80,8 +99,8 @@ namespace MagicStoragePinyinHelper.Core
 			}
 			else
 			{
-				// 2. 使用 TinyPinyin 获取拼音（无分隔符，转小写）
-				result = PinyinHelper.GetPinyin(text, "").ToLower();
+				// 2. 尝试分词匹配（例如："暗影钥匙" -> "暗影" + "钥匙"）
+				result = GetPinyinWithSegmentation(text);
 			}
 
 			// 缓存结果
@@ -98,6 +117,7 @@ namespace MagicStoragePinyinHelper.Core
 		/// <summary>
 		/// 获取字符串的拼音首字母
 		/// 优先从词组字典查询，解决多音字问题
+		/// 如果整个词组不在字典中，尝试分词匹配
 		/// </summary>
 		/// <param name="text">输入文本</param>
 		/// <returns>首字母字符串</returns>
@@ -112,15 +132,16 @@ namespace MagicStoragePinyinHelper.Core
 
 			string result;
 
-			// 1. 优先从词组字典查询拼音，然后提取首字母
-			if (PhrasePinyinDict.TryGetPinyin(text, out string phrasePinyin))
+			// 1. 优先从词组字典查询拼音（带空格分隔），然后提取首字母
+			if (PhrasePinyinDict.TryGetPinyinWithSpaces(text, out string phrasePinyinWithSpaces))
 			{
-				result = ExtractInitialsFromPinyin(phrasePinyin);
+				result = ExtractInitialsFromPinyinWithSpaces(phrasePinyinWithSpaces);
 			}
 			else
 			{
-				// 2. 使用 TinyPinyin 获取拼音首字母（无分隔符，转小写）
-				result = PinyinHelper.GetPinyinInitials(text, "").ToLower();
+				// 2. 尝试分词匹配，然后提取首字母
+				string pinyinWithSpaces = GetPinyinWithSpacesWithSegmentation(text);
+				result = ExtractInitialsFromPinyinWithSpaces(pinyinWithSpaces);
 			}
 
 			// 缓存结果
@@ -133,27 +154,25 @@ namespace MagicStoragePinyinHelper.Core
 		}
 
 		/// <summary>
-		/// 获取首字母（从拼音字符串中提取）
-		/// 例如: "yaoshi" -> "ys", "jinyaoshi" -> "jys"
+		/// 获取首字母（从带空格分隔的拼音字符串中提取）
+		/// 例如: "yao shi" -> "ys", "jin yao shi" -> "jys"
 		/// </summary>
-		private static string ExtractInitialsFromPinyin(string pinyin)
+		private static string ExtractInitialsFromPinyinWithSpaces(string pinyinWithSpaces)
 		{
-			if (string.IsNullOrEmpty(pinyin))
+			if (string.IsNullOrEmpty(pinyinWithSpaces))
 				return string.Empty;
 
 			StringBuilder result = new StringBuilder();
-			result.Append(pinyin[0]); // 第一个字符一定是首字母
 
-			// 查找每个音节的首字母（辅音后跟元音的位置）
-			for (int i = 1; i < pinyin.Length; i++)
+			// 按空格分割音节
+			string[] syllables = pinyinWithSpaces.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+
+			// 提取每个音节的首字母
+			foreach (string syllable in syllables)
 			{
-				char current = pinyin[i];
-				char previous = pinyin[i - 1];
-
-				// 如果前一个是元音，当前是辅音，说明是新音节的开始
-				if (IsVowel(previous) && !IsVowel(current))
+				if (!string.IsNullOrEmpty(syllable))
 				{
-					result.Append(current);
+					result.Append(syllable[0]);
 				}
 			}
 
@@ -161,11 +180,127 @@ namespace MagicStoragePinyinHelper.Core
 		}
 
 		/// <summary>
-		/// 判断是否是元音
+		/// 使用分词匹配获取拼音（无空格）
+		/// 尝试从文本中找到最长的词组匹配，然后组合拼音
+		/// 例如："暗影钥匙" -> "anying" + "yaoshi" = "anyingyaoshi"
+		/// 最大词组长度限制为 4，以提升性能
 		/// </summary>
-		private static bool IsVowel(char c)
+		private static string GetPinyinWithSegmentation(string text)
 		{
-			return c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u' || c == 'ü';
+			if (string.IsNullOrEmpty(text))
+				return string.Empty;
+
+			try
+			{
+				StringBuilder result = new StringBuilder();
+				int i = 0;
+
+				while (i < text.Length)
+				{
+					// 尝试从当前位置找最长的词组匹配
+					int matchLength = 0;
+					string matchedPinyin = null;
+
+					// 从最长可能的词组开始尝试（最多尝试 MAX_PHRASE_LENGTH 个字符）
+					int maxLen = Math.Min(MAX_PHRASE_LENGTH, text.Length - i);
+					for (int len = maxLen; len >= 2; len--)
+					{
+						string substring = text.Substring(i, len);
+						if (PhrasePinyinDict.TryGetPinyin(substring, out string pinyin))
+						{
+							matchLength = len;
+							matchedPinyin = pinyin;
+							break;
+						}
+					}
+
+					// 如果找到匹配的词组
+					if (matchLength > 0)
+					{
+						result.Append(matchedPinyin);
+						i += matchLength;
+					}
+					else
+					{
+						// 没有找到匹配，使用 TinyPinyin 转换单个字符
+						string singleChar = text.Substring(i, 1);
+						string pinyin = PinyinHelper.GetPinyin(singleChar, "").ToLower();
+						result.Append(pinyin);
+						i++;
+					}
+				}
+
+				return result.ToString();
+			}
+			catch (Exception)
+			{
+				// 降级：直接使用 TinyPinyin 转换整个文本
+				return PinyinHelper.GetPinyin(text, "").ToLower();
+			}
+		}
+
+		/// <summary>
+		/// 使用分词匹配获取拼音（带空格分隔）
+		/// 尝试从文本中找到最长的词组匹配，然后组合拼音
+		/// 例如："暗影钥匙" -> "an ying yao shi"
+		/// 最大词组长度限制为 4，以提升性能
+		/// </summary>
+		private static string GetPinyinWithSpacesWithSegmentation(string text)
+		{
+			if (string.IsNullOrEmpty(text))
+				return string.Empty;
+
+			try
+			{
+				StringBuilder result = new StringBuilder();
+				int i = 0;
+
+				while (i < text.Length)
+				{
+					// 尝试从当前位置找最长的词组匹配
+					int matchLength = 0;
+					string matchedPinyin = null;
+
+					// 从最长可能的词组开始尝试（最多尝试 MAX_PHRASE_LENGTH 个字符）
+					int maxLen = Math.Min(MAX_PHRASE_LENGTH, text.Length - i);
+					for (int len = maxLen; len >= 2; len--)
+					{
+						string substring = text.Substring(i, len);
+						if (PhrasePinyinDict.TryGetPinyinWithSpaces(substring, out string pinyin))
+						{
+							matchLength = len;
+							matchedPinyin = pinyin;
+							break;
+						}
+					}
+
+					// 如果找到匹配的词组
+					if (matchLength > 0)
+					{
+						if (result.Length > 0)
+							result.Append(' ');
+						result.Append(matchedPinyin);
+						i += matchLength;
+					}
+					else
+					{
+						// 没有找到匹配，使用 TinyPinyin 转换单个字符
+						string singleChar = text.Substring(i, 1);
+						string pinyin = PinyinHelper.GetPinyin(singleChar, "").ToLower();
+						if (result.Length > 0)
+							result.Append(' ');
+						result.Append(pinyin);
+						i++;
+					}
+				}
+
+				return result.ToString();
+			}
+			catch (Exception)
+			{
+				// 降级：直接使用 TinyPinyin 转换整个文本（带空格）
+				return PinyinHelper.GetPinyin(text, " ").ToLower();
+			}
 		}
 
 		/// <summary>
@@ -191,18 +326,20 @@ namespace MagicStoragePinyinHelper.Core
 				string initials = GetInitials(itemName);
 
 				// 1. 全拼匹配
-				if (pinyin.Contains(search))
+				if (!string.IsNullOrEmpty(pinyin) && pinyin.Contains(search))
 					return true;
 
 				// 2. 首字母匹配
-				if (initials.Contains(search))
+				if (!string.IsNullOrEmpty(initials) && initials.Contains(search))
 					return true;
 
 				return false;
 			}
-			catch (Exception)
+			catch (Exception ex)
 			{
-				// 如果出现任何异常，返回 false 以避免破坏游戏
+				// 如果出现任何异常，记录日志并返回 false 以避免破坏游戏
+				var mod = ModContent.GetInstance<MagicStoragePinyinHelper>();
+				mod?.Logger.Debug($"拼音匹配异常 (物品: {itemName}, 搜索: {searchText}): {ex.Message}");
 				return false;
 			}
 		}
