@@ -42,7 +42,7 @@ namespace MagicStoragePinyinHelper
 			{
 				Logger.Info("正在卸载 Magic Storage 拼音搜索助手...");
 
-				// 1. 撤销 IL 补丁
+				// 1. 撤销 Detour 补丁
 				ItemSorterPatch.Undo();
 
 				// 2. 清理拼音转换系统资源
@@ -63,8 +63,8 @@ namespace MagicStoragePinyinHelper
 		{
 			try
 			{
-				// 应用 IL 补丁（必须在 PostSetupContent 阶段，确保 MagicStorage 已完全加载）
-				Logger.Info("应用搜索功能补丁...");
+				// 应用 Detour 补丁（必须在 PostSetupContent 阶段，确保 MagicStorage 已完全加载）
+				Logger.Info("应用搜索功能 Detour 补丁...");
 				ItemSorterPatch.Apply();
 				Logger.Info("搜索功能补丁应用成功！");
 

@@ -1,8 +1,6 @@
 using System;
-using System.Collections.Generic;
 using System.Reflection;
-using MonoMod.Cil;
-using Mono.Cecil.Cil;
+using MonoMod.RuntimeDetour;
 using Terraria;
 using Terraria.ModLoader;
 using MagicStoragePinyinHelper.Core;
@@ -10,15 +8,16 @@ using MagicStoragePinyinHelper.Core;
 namespace MagicStoragePinyinHelper.Patches
 {
 	/// <summary>
-	/// IL 补丁类 - 拦截并增强 MagicStorage 的搜索功能
+	/// Detour 补丁类 - 拦截并增强 MagicStorage 的搜索功能
+	/// 使用 Detour 方式替代 IL 补丁，更稳定、更易维护
 	/// </summary>
 	public static class ItemSorterPatch
 	{
+		private static Hook _filterHook;
 		private static bool _isApplied = false;
-		private static MethodInfo _targetMethod;
 
 		/// <summary>
-		/// 应用 IL 补丁
+		/// 应用 Detour 补丁
 		/// </summary>
 		public static void Apply()
 		{
@@ -27,6 +26,8 @@ namespace MagicStoragePinyinHelper.Patches
 
 			try
 			{
+				var logger = ModContent.GetInstance<MagicStoragePinyinHelper>()?.Logger;
+
 				// 获取 MagicStorage.Sorting.ItemSorter 类型
 				Type itemSorterType = GetItemSorterType();
 				if (itemSorterType == null)
@@ -35,21 +36,36 @@ namespace MagicStoragePinyinHelper.Patches
 				}
 
 				// 获取 FilterBySearchText 方法
-				_targetMethod = itemSorterType.GetMethod(
+				MethodInfo targetMethod = itemSorterType.GetMethod(
 					"FilterBySearchText",
 					BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Public
 				);
 
-				if (_targetMethod == null)
+				if (targetMethod == null)
 				{
 					throw new Exception("无法找到 FilterBySearchText 方法！MagicStorage 版本可能不兼容。");
 				}
 
-				// 使用 MonoMod 的 Modify 方法应用 IL 编辑
-				MonoModHooks.Modify(_targetMethod, ModifyFilterBySearchText);
+				logger?.Info($"找到目标方法: {targetMethod.Name}");
+				logger?.Info($"方法签名: {targetMethod}");
+
+				// 获取 Detour 目标方法
+				MethodInfo detourMethod = typeof(ItemSorterPatch).GetMethod(
+					nameof(FilterBySearchText_Detour),
+					BindingFlags.NonPublic | BindingFlags.Static
+				);
+
+				if (detourMethod == null)
+				{
+					throw new Exception("无法找到 Detour 方法！这是内部错误。");
+				}
+
+				// 应用 Detour
+				_filterHook = new Hook(targetMethod, detourMethod);
 				_isApplied = true;
 
-				ModContent.GetInstance<MagicStoragePinyinHelper>()?.Logger.Info("拼音搜索补丁已成功应用！");
+				logger?.Info("✓ 拼音搜索 Detour 补丁已成功应用！");
+				logger?.Info("  优势: 比 IL 补丁更稳定，只要方法签名不变就不会失效");
 			}
 			catch (Exception ex)
 			{
@@ -59,13 +75,15 @@ namespace MagicStoragePinyinHelper.Patches
 		}
 
 		/// <summary>
-		/// 撤销 IL 补丁（tModLoader 会自动管理 hook 的生命周期）
+		/// 撤销 Detour 补丁
 		/// </summary>
 		public static void Undo()
 		{
-			// tModLoader 的 MonoModHooks 会在 Mod 卸载时自动清理所有 hooks
-			// 不需要手动撤销
-			_targetMethod = null;
+			if (_filterHook != null)
+			{
+				_filterHook.Dispose();
+				_filterHook = null;
+			}
 			_isApplied = false;
 		}
 
@@ -94,95 +112,51 @@ namespace MagicStoragePinyinHelper.Patches
 		}
 
 		/// <summary>
-		/// IL 编辑方法 - 修改 FilterBySearchText 的逻辑
+		/// Detour 方法 - 替换 FilterBySearchText 的实现
+		///
+		/// 原始方法签名:
+		/// internal static bool FilterBySearchText(Item item, string filter, int modSearchIndex, bool modSearched = false)
 		/// </summary>
-		private static void ModifyFilterBySearchText(ILContext il)
+		private static bool FilterBySearchText_Detour(
+			Func<Item, string, int, bool, bool> orig,
+			Item item,
+			string filter,
+			int modSearchIndex,
+			bool modSearched)
 		{
-			var logger = ModContent.GetInstance<MagicStoragePinyinHelper>()?.Logger;
+			// 调用原始方法获取默认搜索结果
+			bool originalResult = orig(item, filter, modSearchIndex, modSearched);
+
+			// 如果原始搜索已经匹配，直接返回 true（短路优化）
+			if (originalResult)
+				return true;
+
+			// 原始搜索未匹配，尝试拼音匹配
+			// 注意：只对物品名称进行拼音匹配，不影响 @ 和 # 前缀的特殊搜索
 			try
 			{
-				logger?.Info("开始 IL 编辑...");
-				// logger?.Info($"目标方法: {il.Method.FullName}");
+				// 检查是否是特殊搜索（@ 开头 = mod 搜索，# 开头 = tooltip 搜索）
+				// 这些特殊搜索已经在原始方法中处理过了，这里只处理普通名称搜索
+				if (string.IsNullOrWhiteSpace(filter))
+					return false;
 
-				// 输出原始 IL 代码用于调试（仅在需要调试时取消注释）
-				// logger?.Info("原始 IL 代码:");
-				// logger?.Info(il.ToString());
+				string trimmedFilter = filter.Trim();
 
-				ILCursor cursor = new ILCursor(il);
+				// 如果是特殊搜索前缀，不进行拼音匹配（已经在原始方法中处理）
+				if (trimmedFilter.StartsWith("@") || trimmedFilter.StartsWith("#"))
+					return false;
 
-				// 定位到 return item.Name.Contains(...) 的位置
-				// 在 ItemSorter.cs 第 328 行
-				// 从 IL 代码看，模式是: ... ldc.i4.5 -> callvirt Contains -> ret
-				// 我们需要找到最后一个 ret 之前的 Contains 调用
+				// 执行拼音匹配
+				bool pinyinMatch = PinyinConverter.MatchesPinyin(item.Name, trimmedFilter);
 
-				// 找到所有的 Contains(string, StringComparison) 调用
-				var containsPositions = new List<int>();
-				cursor.Index = 0;
-
-				while (cursor.TryGotoNext(MoveType.Before,
-					i => i.MatchLdcI4(5),  // StringComparison.OrdinalIgnoreCase
-					i => i.MatchCallvirt<string>("Contains")
-				))
-				{
-					containsPositions.Add(cursor.Index);
-					cursor.Index++;  // 移动到下一个位置继续搜索
-				}
-
-				if (containsPositions.Count == 0)
-				{
-					logger?.Error("未找到任何 Contains 调用！");
-					logger?.Error("请检查 MagicStorage 的 ItemSorter.FilterBySearchText 方法是否已更改。");
-					throw new Exception("无法定位到 FilterBySearchText 的 Contains 调用！MagicStorage 代码结构可能已更改。");
-				}
-
-				// 使用最后一个 Contains 调用（应该是 return item.Name.Contains(filter, ...) 那一行）
-				int targetIndex = containsPositions[containsPositions.Count - 1];
-				cursor.Index = targetIndex;
-				logger?.Info($"成功定位到目标 Contains 调用（共找到 {containsPositions.Count} 个 Contains 调用）");
-
-				// 移动到 Contains 调用之后（跳过 ldc.i4.5, Contains）
-				cursor.Index += 2;
-
-				// 此时栈顶是 Contains 的返回值 (bool)
-				// 我们需要实现: originalResult || PinyinConverter.MatchesPinyin(item.Name, filter)
-
-				// 保存原始结果
-				cursor.Emit(OpCodes.Dup);  // 复制栈顶的 bool 值
-
-				// 创建标签用于短路求值
-				ILLabel skipPinyinCheck = cursor.DefineLabel();
-
-				// 如果原始结果为 true，跳过拼音检查
-				cursor.Emit(OpCodes.Brtrue_S, skipPinyinCheck);
-
-				// 原始结果为 false，执行拼音匹配
-				cursor.Emit(OpCodes.Pop);  // 弹出栈顶的 false
-
-				// 加载 item 和 filter 参数
-				// 注意：由于编译器优化，我们需要从参数中获取
-				cursor.Emit(OpCodes.Ldarg_0);  // 加载 item (第一个参数)
-				cursor.Emit(OpCodes.Ldarg_1);  // 加载 filter (第二个参数，string)
-
-				// 调用拼音匹配（注释掉频繁的日志输出）
-				cursor.EmitDelegate<Func<Item, string, bool>>((item, filter) => {
-					bool result = PinyinConverter.MatchesPinyin(item.Name, filter);
-					// logger?.Debug($"拼音匹配: '{item.Name}' vs '{filter}' = {result}");
-					return result;
-				});
-
-				// 标记跳过位置
-				cursor.MarkLabel(skipPinyinCheck);
-
-				logger?.Info("IL 编辑成功完成！");
-				// 输出修改后的 IL 代码（仅在需要调试时取消注释）
-				// logger?.Info("修改后的 IL 代码:");
-				// logger?.Info(il.ToString());
+				return pinyinMatch;
 			}
 			catch (Exception ex)
 			{
-				logger?.Error($"IL 编辑失败: {ex}");
-				logger?.Error($"堆栈跟踪: {ex.StackTrace}");
-				throw;
+				// 如果拼音匹配出现异常，记录日志但不影响游戏运行
+				ModContent.GetInstance<MagicStoragePinyinHelper>()?.Logger.Error(
+					$"拼音匹配时发生异常: {ex.Message}");
+				return false;
 			}
 		}
 	}

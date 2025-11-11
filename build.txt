@@ -1,6 +1,6 @@
 displayName = Magic Storage 拼音搜索助手
 author = xixifu
-version = 0.3.0
+version = 0.4.0
 homepage = https://github.com/Sisyphean-a/MagicStoragePinyinHelper
 hideCode = false
 hideResources = false
